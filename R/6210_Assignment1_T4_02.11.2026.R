@@ -1,3 +1,9 @@
+
+###### script attributions
+
+#Original Script by Moyike199 - wrote inital script and data analysis
+#Script alterations by p0pscotch - revised the script by adding a reusable data-inspection function, a divergence comparison test, and an updated visualization.
+
 ###1 - OVERVIEW----
 
 #####Question----
@@ -33,37 +39,34 @@ library(patchwork)
 # Date of Download: October 23, 2026
 
 #####trichinella spiralis----
-spiralis_raw <- read_csv("../data/trichinella_spiralis_te.csv")
-
-# check class
-class(spiralis_raw)
-
-# see variables 
-names(spiralis_raw)
-
-# see summary
-summary(spiralis_raw)
-
-# check dimensions
-dim(spiralis_raw)
+spiralis_raw <- read_csv("../binf_Assignment-2/data/trichinella_spiralis_te.csv")
 
 #####trichinella murelli----
-murrelli_raw <- read_csv("../data/trichinella murrelli_te.csv")
+murrelli_raw <- read_csv("../binf_Assignment-2/data/trichinella murrelli_te.csv")
 
-# check class
-class(murrelli_raw)
+# check class, variables, summary, dimensions
 
-# see variables 
-names(murrelli_raw)
+inspect_data <- function(data) {
+  cat("Class:\n")
+  print(class(data))
 
-# see summary
-summary(murrelli_raw)
+  cat("\nColumn names:\n")
+  print(names(data))
 
-# check dimensions
-dim(murrelli_raw)
+  cat("\nSummary:\n")
+  print(summary(data))
+
+  cat("\nDimensions (rows, columns):\n")
+  print(dim(data))
+}
+
+inspect_data(spiralis_raw)
+inspect_data(murrelli_raw)
+
 
 ###3 - DATA CLEANING---- 
 #####Combination----
+# only keep variables of interest
 
 spiralis_clean <- spiralis_raw |>
   select(qry_id, qry_start, qry_end, qry_width, matching_class, perc_div, sw_score) |>
@@ -132,8 +135,11 @@ overall_te_summary <- combined_te |>
     total_te_bp = sum(qry_width)
   )
 
-cat("\n--- Transposable Element Summary per Species ---\n")
-print(overall_te_summary)
+cat(
+  "\n--- Transposable Element Summary per Species ---\n",
+  paste(capture.output(print(overall_te_summary)), collapse = "\n"),
+  "\n"
+)
 
 ####Metric 2----
 
@@ -145,8 +151,12 @@ te_class_summary <- combined_te |>
   mutate(percentage = (n / sum(n)) * 100) |>
   ungroup()
 
-cat("\n--- Transposable Element Class Proportions ---\n")
-print(te_class_summary)
+
+cat(
+  "\n--- Transposable Element Class Proportions ---\n",
+  paste(capture.output(print(te_class_summary)), collapse = "\n"),
+  "\n"
+)
 
 ###5 - DATA VISUALIZATION----
 
@@ -223,41 +233,79 @@ print(wilcox_te_res)
 df_percdiv <- aggregate(x = df_tstmclean, by = list(MatchClass = df_tstmclean$broad_class), FUN = function(x) mean(x, na.rm = TRUE))
 summary(df_percdiv)
 
-####Divergence----
-# consider comparing and confirming the evolutionary relationship between the two: At a rate of approximately 5% divergence from consensus (Kimura divergence). Under 5% is considered very low divergence. This will address question into which of the two species is more closely resembling the family consensus. Investigation into divergence will shed light into how alike they are (percentage conservation from the same ancestor/reference), whereas lowest divergence will allow for higher resolution into where the divergence starts to occur. 
 
-dfOverDiv <- combined_te |>
-  filter(!is.na(matching_class)) |>
-  filter(perc_div >= 5) |>
-  group_by(species, matching_class) |>
-  summarize(avgPD = mean(perc_div, na.rm = TRUE)) |>
-  arrange(desc(avgPD)) |>
-  print()
+##### Perform Statistical Test to compare perc div between both species
 
-####Conservation----
-# now consider the lists of least divergence and look for similarity
+divergence_data <- combined_te |>
+  filter(!is.na(perc_div), !is.na(broad_class))
 
-dfUnderDiv <- combined_te |>
-  filter(!is.na(matching_class)) |>
-  filter(perc_div <= 5) |>
-  group_by(species, matching_class) |>
-  summarize(avgPD = mean(perc_div, na.rm = TRUE)) |> ungroup() |>
-  arrange(avgPD) |>
-  print()
+# Summarize divergence for each species
+divergence_by_species <- divergence_data |>
+  group_by(species) |>
+  summarize(
+    n = n(),
+    median_divergence = median(perc_div),
+    .groups = "drop"
+  )
 
-#####Jitter Plot / Test----
+print(divergence_by_species)
 
-ggplot(dfOverDiv, aes(x = avgPD, y = matching_class)) +
-  geom_jitter(aes(color = species), width = 0., height = 0, alpha = 0.7, size = 3) +
-  scale_color_manual(values = c("T. spiralis" = "blue", "T. murrelli" = "red")) +
-  labs(
-    x = "Average Divergence",
-    y = "Repeat Class",
-    color = "Species"
+# Test whether divergence distributions differ between species
+divergence_test <- wilcox.test(
+  perc_div ~ species,
+  data = divergence_data,
+  exact = FALSE
+)
+
+print(divergence_test)
+
+#### Divergence across the full range ----
+
+divergence_data <- combined_te |>
+  filter(!is.na(perc_div), !is.na(broad_class))
+
+# Show the number of observations and median divergence
+# for each species and broad class.
+divergence_summary <- divergence_data |>
+  group_by(species, broad_class) |>
+  summarize(
+    n = n(),
+    median_divergence = median(perc_div),
+    .groups = "drop"
+  )
+
+print(divergence_summary)
+
+# Plot the full divergence distributions for both species.
+fig_divergence <- ggplot(
+  divergence_data,
+  aes(x = broad_class, y = perc_div, fill = species)
+) +
+  geom_boxplot(
+    position = position_dodge(width = 0.8),
+    outlier.alpha = 0.15
   ) +
-  theme_minimal()
+  scale_fill_manual(values = c(
+    "T. spiralis" = "#2b8cbe",
+    "T. murrelli" = "#e6550d"
+  )) +
+  coord_flip() +
+  labs(
+    x = "Transposable Element Class",
+    y = "Average Divergence (%)",
+    fill = " "
+  ) +
+  theme_classic()
 
-# did not enjoy the visualization (sparse + no real direction)
+print(fig_divergence)
+
+ggsave(
+  "../output/figure_divergence_by_class.png",
+  plot = fig_divergence,
+  width = 8,
+  height = 6
+)
+
 
 #####Dumbbell Plots----
 # attempting dumbbell for better presentation 
